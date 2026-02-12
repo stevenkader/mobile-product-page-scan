@@ -281,6 +281,60 @@ async function detectShipping(page) {
   }
 }
 
+
+ync function detectModal(page) {
+  try {
+    const elements = await page.$$('body *');
+
+    for (const el of elements) {
+      try {
+        const box = await el.boundingBox();
+        if (!box) continue;
+
+        // Must be visually present
+        if (box.width < 100 || box.height < 100) continue;
+
+        const styles = await el.evaluate((node) => {
+          const computed = window.getComputedStyle(node);
+          return {
+            position: computed.position,
+            zIndex: computed.zIndex,
+            display: computed.display,
+            visibility: computed.visibility,
+            opacity: computed.opacity
+          };
+        });
+
+        const coversViewport =
+          box.y < 844 &&
+          box.x < 390 &&
+          box.width > 250 &&
+          box.height > 200;
+
+        const highZ = styles.zIndex !== 'auto' && parseInt(styles.zIndex) > 10;
+
+        const isOverlayPosition =
+          styles.position === 'fixed' || styles.position === 'absolute';
+
+        const visible =
+          styles.display !== 'none' &&
+          styles.visibility !== 'hidden' &&
+          parseFloat(styles.opacity) > 0;
+
+        if (coversViewport && highZ && isOverlayPosition && visible) {
+          return 'present';
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return 'not_present';
+  } catch {
+    return 'not_present';
+  }
+}
+
 /**
  * Main scanner entrypoint (Railway-ready)
  *
@@ -330,6 +384,7 @@ async function scanProductPage(url, options = {}) {
     const reviewsResult = await detectReviews(page, includeDiagnostics);
     const priceState = await detectPrice(page);
     const shippingState = await detectShipping(page);
+    const modalState = await detectModal(page);
 
     const response = {
       screenshotUrl: `${baseUrl.replace(/\/$/, '')}/scans/${filename}`,
@@ -337,6 +392,7 @@ async function scanProductPage(url, options = {}) {
         reviews: reviewsResult.state,
         price: priceState,
         shipping: shippingState,
+        modalState
       },
     };
 
