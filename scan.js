@@ -364,8 +364,7 @@ async function detectModal(page) {
  * @param {string} options.baseUrl - Required in production
  * @param {boolean} options.includeDiagnostics - Dev only
  * @param {string} options.scansDir - Defaults to ./public/scans
- */
-async function scanProductPage(url, options = {}) {
+ */async function scanProductPage(url, options = {}) {
   const {
     baseUrl = process.env.BASE_URL || '',
     includeDiagnostics = false,
@@ -391,8 +390,22 @@ async function scanProductPage(url, options = {}) {
     const page = await context.newPage();
 
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(1500);
 
+    // Wait for modals — many popups have intentional delays (3-5s)
+    // Poll for modal presence over a window, rather than one fixed wait
+    let modalState = 'not_present';
+    const MODAL_POLL_INTERVAL = 500;
+    const MODAL_MAX_WAIT = 5000;
+    let elapsed = 0;
+
+    while (elapsed < MODAL_MAX_WAIT) {
+      await page.waitForTimeout(MODAL_POLL_INTERVAL);
+      elapsed += MODAL_POLL_INTERVAL;
+      modalState = await detectModal(page);
+      if (modalState === 'present') break;
+    }
+
+    // Screenshot AFTER modal detection so we capture the actual state
     const filename = `scan-${Date.now()}.png`;
     const filePath = path.join(scansDir, filename);
 
@@ -404,7 +417,6 @@ async function scanProductPage(url, options = {}) {
     const reviewsResult = await detectReviews(page, includeDiagnostics);
     const priceState = await detectPrice(page);
     const shippingState = await detectShipping(page);
-    const modalState = await detectModal(page);
 
     const response = {
       screenshotUrl: `${baseUrl.replace(/\/$/, '')}/scans/${filename}`,
