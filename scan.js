@@ -281,57 +281,51 @@ async function detectShipping(page) {
   }
 }
 
-
 async function detectModal(page) {
   try {
-    const elements = await page.$$('body *');
+    return await page.evaluate(() => {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const viewportArea = vw * vh;
+      const threshold = 0.3;
 
-    for (const el of elements) {
-      try {
-        const box = await el.boundingBox();
-        if (!box) continue;
+      // Check all elements, but do it in-page (no IPC overhead)
+      const all = document.querySelectorAll('body *');
 
-        // Must be visually present
-        if (box.width < 100 || box.height < 100) continue;
+      for (const node of all) {
+        const s = window.getComputedStyle(node);
 
-        const styles = await el.evaluate((node) => {
-          const computed = window.getComputedStyle(node);
-          return {
-            position: computed.position,
-            zIndex: computed.zIndex,
-            display: computed.display,
-            visibility: computed.visibility,
-            opacity: computed.opacity
-          };
-        });
+        // Quick style pre-filter before expensive getBoundingClientRect
+        if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) continue;
+        if (s.position !== 'fixed' && s.position !== 'absolute' && parseInt(s.zIndex) < 100) continue;
 
-      const viewportArea = 390 * 844;
-      const elementArea = box.width * box.height;
+        const rect = node.getBoundingClientRect();
+        if (!rect.width || !rect.height) continue;
 
-      const coversViewport =
-        elementArea > viewportArea * 0.4 &&
-        box.y < 844 &&
-        box.x < 390;
+        // Clamp to viewport
+        const visibleWidth = Math.min(rect.right, vw) - Math.max(rect.left, 0);
+        const visibleHeight = Math.min(rect.bottom, vh) - Math.max(rect.top, 0);
+        if (visibleWidth <= 0 || visibleHeight <= 0) continue;
 
-        const highZ = styles.zIndex !== 'auto' && parseInt(styles.zIndex) > 10;
-
-        const isOverlayPosition =
-          styles.position === 'fixed' || styles.position === 'absolute';
-
-        const visible =
-          styles.display !== 'none' &&
-          styles.visibility !== 'hidden' &&
-          parseFloat(styles.opacity) > 0;
-
-        if (coversViewport && highZ && isOverlayPosition && visible) {
+        const visibleArea = visibleWidth * visibleHeight;
+        if (visibleArea >= viewportArea * threshold) {
           return 'present';
         }
-      } catch {
-        continue;
       }
-    }
 
-    return 'not_present';
+      // Also check common modal selectors as a fast path
+      const commonSelectors = [
+        '[role="dialog"]', '[aria-modal="true"]',
+        '.modal.show', '.modal.active', '.modal.open',
+        '.overlay.active', '.popup.visible'
+      ];
+      for (const sel of commonSelectors) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetParent !== null) return 'present';
+      }
+
+      return 'not_present';
+    });
   } catch {
     return 'not_present';
   }
