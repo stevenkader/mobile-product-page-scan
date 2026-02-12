@@ -1,0 +1,23 @@
+{
+  "name": "mobile-product-page-scan",
+  "version": "1.0.0",
+  "description": "Railway-ready Shopify product page scanner for mobile viewport analysis",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "shopify",
+    "product-page",
+    "scanner",
+    "playwright",
+    "mobile"
+  ],
+  "author": "Steven Kader",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "playwright": "^1.41.2"
+  }
+}
