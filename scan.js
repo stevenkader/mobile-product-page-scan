@@ -305,11 +305,13 @@ async function detectModal(page) {
           };
         });
 
-        const coversViewport =
-          box.y < 844 &&
-          box.x < 390 &&
-          box.width > 250 &&
-          box.height > 200;
+      const viewportArea = 390 * 844;
+      const elementArea = box.width * box.height;
+
+      const coversViewport =
+        elementArea > viewportArea * 0.4 &&
+        box.y < 844 &&
+        box.x < 390;
 
         const highZ = styles.zIndex !== 'auto' && parseInt(styles.zIndex) > 10;
 
