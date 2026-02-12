@@ -39,7 +39,6 @@ async function isMediaElement(element) {
       return false;
     });
   } catch {
-    // Conservative: if we can't evaluate, exclude.
     return true;
   }
 }
@@ -77,14 +76,12 @@ async function isInNavigationContext(element) {
       return false;
     });
   } catch {
-    // Conservative: if we can't evaluate, exclude.
     return true;
   }
 }
 
 /**
  * Positive allowlist: element must contain explicit review evidence.
- * (Known widgets OR stars OR rating OR review-count patterns.)
  */
 async function hasReviewContent(element) {
   try {
@@ -95,31 +92,26 @@ async function hasReviewContent(element) {
       const id = el.id || '';
       const attrs = (className + ' ' + id).toLowerCase();
 
-      // Known review platforms (explicit)
       const knownWidgets = ['jdgm', 'yotpo', 'loox', 'stamped', 'rivyo', 'reviewsio', 'trustpilot'];
       for (const w of knownWidgets) {
         if (attrs.includes(w)) return true;
       }
 
-      // Stars (explicit)
       const hasStars =
         (html.includes('<svg') && /star|rating/i.test(html)) ||
         /[★☆⭐]/.test(text) ||
         /fa-star|icon-star|star-icon|icon_star/i.test(html);
 
-      // Numeric ratings (tightened)
       const hasRating =
         /\b[0-5]\.\d+\s*(?:\/\s*5|out\s+of\s+5)?\b/i.test(text) ||
         /\b[0-5]\.\d+\s*[★☆⭐]/.test(text) ||
         /[★☆⭐]{2,}/.test(text);
 
-      // Review counts
       const hasCount = /\d+\s+(review|rating)s?/i.test(text) || (/\(\d+\)/.test(text) && /(review|rating)/i.test(text));
 
       return hasStars || hasRating || hasCount;
     });
   } catch {
-    // Conservative: exclude if uncertain.
     return false;
   }
 }
@@ -195,16 +187,16 @@ async function detectReviews(page, diagnosticsEnabled = false) {
         }
 
         if (!diagnosticsEnabled) {
-          // When diagnostics are off, we only care about fold classification.
           if (box.y < VIEWPORT.height) {
             diagnostics.aboveFold.push({ position: box });
+            // Early exit — we already know it's above fold
+            break;
           } else {
             diagnostics.belowFold.push({ position: box });
           }
           continue;
         }
 
-        // Diagnostics ON: include minimal element details for debugging
         const details = await el.evaluate((node) => ({
           tagName: node.tagName,
           className: node.className,
@@ -221,7 +213,12 @@ async function detectReviews(page, diagnosticsEnabled = false) {
       }
     }
 
-    const state = diagnostics.aboveFold.length > 0 ? 'visible_above_fold' : 'present_below_fold';
+    const state =
+      diagnostics.aboveFold.length > 0
+        ? 'visible_above_fold'
+        : diagnostics.belowFold.length > 0
+          ? 'present_below_fold'
+          : 'not_present';
     return { state, diagnostics };
   } catch {
     return { state: 'not_present', diagnostics };
@@ -262,8 +259,6 @@ async function detectPrice(page) {
  * Detects whether shipping is mentioned anywhere on the page:
  * - present
  * - not_present
- *
- * (Presence-only in v1; above-the-fold shipping is a future signal.)
  */
 async function detectShipping(page) {
   try {
@@ -281,47 +276,77 @@ async function detectShipping(page) {
   }
 }
 
+/**
+ * Detects modal/overlay presence using:
+ * 1. Semantic selectors (fast path)
+ * 2. Area-based heuristic (fallback for non-semantic modals)
+ *
+ * Returns: 'present' | 'not_present'
+ */
 async function detectModal(page) {
   try {
     return await page.evaluate(() => {
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const viewportArea = vw * vh;
-      const threshold = 0.3;
+      const COVERAGE_THRESHOLD = 0.3;
 
-      // Check all elements, but do it in-page (no IPC overhead)
+      // --- Fast path: semantic modal selectors ---
+      const semanticSelectors = [
+        '[role="dialog"]',
+        '[aria-modal="true"]',
+        '.modal.show',
+        '.modal.active',
+        '.modal.open',
+        '.modal[style*="display: block"]',
+        '.modal[style*="display:block"]',
+        '.overlay.active',
+        '.popup.visible',
+        '.fancybox-is-open',
+        '.swal2-shown',
+      ];
+
+      for (const sel of semanticSelectors) {
+        try {
+          const el = document.querySelector(sel);
+          if (!el) continue;
+          const s = window.getComputedStyle(el);
+          if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) continue;
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) return 'present';
+        } catch {
+          continue;
+        }
+      }
+
+      // --- Fallback: area-based heuristic over all elements ---
       const all = document.querySelectorAll('body *');
 
       for (const node of all) {
         const s = window.getComputedStyle(node);
 
-        // Quick style pre-filter before expensive getBoundingClientRect
+        // Skip invisible elements early
         if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) continue;
-        if (s.position !== 'fixed' && s.position !== 'absolute' && parseInt(s.zIndex) < 100) continue;
+
+        // Only consider overlay-like positioning
+        const pos = s.position;
+        const zIndex = parseInt(s.zIndex, 10);
+        const hasHighZ = !isNaN(zIndex) && zIndex >= 100;
+        const isOverlayPositioned = pos === 'fixed' || pos === 'sticky' || (pos === 'absolute' && hasHighZ);
+        if (!isOverlayPositioned) continue;
 
         const rect = node.getBoundingClientRect();
         if (!rect.width || !rect.height) continue;
 
-        // Clamp to viewport
+        // Calculate visible area clamped to viewport
         const visibleWidth = Math.min(rect.right, vw) - Math.max(rect.left, 0);
         const visibleHeight = Math.min(rect.bottom, vh) - Math.max(rect.top, 0);
         if (visibleWidth <= 0 || visibleHeight <= 0) continue;
 
         const visibleArea = visibleWidth * visibleHeight;
-        if (visibleArea >= viewportArea * threshold) {
+        if (visibleArea >= viewportArea * COVERAGE_THRESHOLD) {
           return 'present';
         }
-      }
-
-      // Also check common modal selectors as a fast path
-      const commonSelectors = [
-        '[role="dialog"]', '[aria-modal="true"]',
-        '.modal.show', '.modal.active', '.modal.open',
-        '.overlay.active', '.popup.visible'
-      ];
-      for (const sel of commonSelectors) {
-        const el = document.querySelector(sel);
-        if (el && el.offsetParent !== null) return 'present';
       }
 
       return 'not_present';
@@ -332,11 +357,11 @@ async function detectModal(page) {
 }
 
 /**
- * Main scanner entrypoint (Railway-ready)
+ * Main scanner entrypoint
  *
  * @param {string} url
  * @param {object} options
- * @param {string} options.baseUrl - Required in production (e.g. https://your-app.up.railway.app)
+ * @param {string} options.baseUrl - Required in production
  * @param {boolean} options.includeDiagnostics - Dev only
  * @param {string} options.scansDir - Defaults to ./public/scans
  */
@@ -366,12 +391,11 @@ async function scanProductPage(url, options = {}) {
     const page = await context.newPage();
 
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(1500); // small settle time for widgets
+    await page.waitForTimeout(1500);
 
     const filename = `scan-${Date.now()}.png`;
     const filePath = path.join(scansDir, filename);
 
-    // Always capture initial viewport only (the fold is the screenshot)
     await page.screenshot({
       path: filePath,
       clip: { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height },
@@ -388,7 +412,7 @@ async function scanProductPage(url, options = {}) {
         reviews: reviewsResult.state,
         price: priceState,
         shipping: shippingState,
-        modalState
+        modal: modalState,
       },
     };
 
