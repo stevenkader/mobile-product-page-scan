@@ -282,7 +282,7 @@ async function detectShipping(page) {
 }
 
 
-aync function detectModal(page) {
+async function detectModal(page) {
   try {
     const elements = await page.$$('body *');
 
