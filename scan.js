@@ -395,7 +395,7 @@ async function detectModal(page) {
     // Poll for modal presence over a window, rather than one fixed wait
     let modalState = 'not_present';
     const MODAL_POLL_INTERVAL = 500;
-    const MODAL_MAX_WAIT = 5000;
+    const MODAL_MAX_WAIT = 8000;
     let elapsed = 0;
 
     while (elapsed < MODAL_MAX_WAIT) {
