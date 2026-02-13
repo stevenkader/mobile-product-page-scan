@@ -402,6 +402,7 @@ async function detectModal(page) {
       await page.waitForTimeout(MODAL_POLL_INTERVAL);
       elapsed += MODAL_POLL_INTERVAL;
       modalState = await detectModal(page);
+      console.log (elapsed, modelState) ;
       if (modalState === 'present') break;
     }
 
