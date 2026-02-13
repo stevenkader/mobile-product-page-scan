@@ -402,8 +402,8 @@ async function detectModal(page) {
       await page.waitForTimeout(MODAL_POLL_INTERVAL);
       elapsed += MODAL_POLL_INTERVAL;
       modalState = await detectModal(page);
-      console.log(JSON.stringify({ event: 'modal_check', state: modalState, elapsed, url }));
-      if (modalState === 'present') break;
+    //  console.log(JSON.stringify({ event: 'modal_check', state: modalState, elapsed, url }));
+      //if (modalState === 'present') break;
     }
 
     // Screenshot AFTER modal detection so we capture the actual state
